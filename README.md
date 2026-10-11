@@ -1,4 +1,4 @@
-# hybrid-router
+# 基于BGE-*与Laya:System1快速决策模型的三层级联路由
 
 ## 声明
 
