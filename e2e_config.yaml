@@ -1,0 +1,285 @@
+# ⚠️ 本文件里的角色台词 / 风格词（如「白米饭」等）**仅为示例**：个人使用时请替换成你自己的角色词表。
+version: 2
+hard_rules:
+- id: privacy-keywords
+  pattern: 工资单|病历|身份证|合同(?!资产|负债)|银行卡
+  intent: privacy_sensitive
+  action: force_local
+  hot_reload: true
+- id: rag-a1-income-tax
+  pattern: 所得税|递延所得税|暂时性差异|应纳税暂时性差异|可抵扣暂时性差异|计税基础|应纳税所得额|纳税调增|纳税调减|亏损弥补|递延所得税资产|递延所得税负债
+  intent: knowledge_qa
+  domain: finance_tax
+- id: rag-a2-assets
+  pattern: 资产减值|减值准备|坏账准备|存货跌价|预计负债|固定资产|无形资产|使用权资产|租赁负债|折旧|摊销|残值|使用寿命
+  intent: knowledge_qa
+  domain: finance_tax
+- id: rag-a3-revenue-instruments
+  pattern: 收入确认|履约义务|合同资产|合同负债|总额法|净额法|金融工具|摊余成本|实际利率|权益工具|公允价值|其他综合收益
+  intent: knowledge_qa
+  domain: finance_tax
+- id: rag-a4-audit
+  pattern: 审计|审计底稿|重要性水平|函证|抽凭|盘点|期后事项|持续经营|前任注册会计师|关键审计事项|质量管理|职业道德|独立性
+  intent: knowledge_qa
+  domain: finance_tax
+- id: rag-a5-standards-tax
+  pattern: 企业会计准则|小企业会计准则|CAS|准则解释|应用指南|增值税|征收率|进项税额|销项税额|不得抵扣|发票|税前扣除|业务招待费|广宣费|职工福利费|公益捐赠|小微企业优惠|印花税|汇算清缴
+  intent: knowledge_qa
+  domain: finance_tax
+- id: persona-defense
+  pattern: [LocalModelName]|深海[LocalModelName]|大傻鱼|小肥鱼|肥鱼|白米饭|米饭|要饭|饭钱|添饭|记一碗|记我一碗|记你账上|这碗得加|不白干|白工|你才是|炸毛|尾鳍|拍屏幕|本鲸|小硅鱼
+  intent: persona_defense
+- id: tool-device-switch
+  pattern: (开|关|打开|关闭)(灯|台灯|客厅灯|卧室灯|空调|插座|风扇|投影)
+  intent: tool_call
+  confirm: true
+  args_schema:
+    device: str
+    action: enum[open, close]
+- id: tool-volume-timer
+  pattern: 音量(调大|调小|静音)|(定时|倒计时)\s*\d+
+  intent: tool_call
+  confirm: true
+  args_schema:
+    action: enum[volume_up, volume_down, mute, timer]
+    minutes: int
+- id: tool-query-nosideeffect
+  pattern: (几点了|现在几点)|查(天气|气温|限行)|今(天|日)(下雨|最高温|多少度)
+  intent: tool_call
+  confirm: false
+- id: tool-file-cmd-exec
+  pattern: 导出成?\s*PDF|备份一份|清理(一下)?\s*(临时|缓存|文件|文件夹)|跑(一?下|个)?[^。]{0,8}(脚本|命令|统计)|在终端里跑|存(到|进)\s*\S{0,12}\s*(文件夹|目录)|写个?\s*(Python|python|Shell|shell|批处理)?\s*脚本|配置改成|重启路由
+  intent: tool_call
+  confirm: true
+- id: realtime-strong
+  pattern: 新闻|头条|热搜|股价|汇率|行情|比分|赛况|比赛结果|油价|金价|开盘|收盘|今天几号|今天星期几
+  intent: realtime_lookup
+- id: realtime-weak-recent
+  pattern: ^.{0,40}最新消息
+  intent: realtime_lookup
+conflict_policy: pass_to_classifier
+input_guard:
+  enabled: true
+  garbage_pattern: ^[\W_]{0,8}$
+  refuse_reply: 这条本鱼实在看不出想问什么——用户再多给几个字嘛。
+privacy_detection:
+  default_sensitive: false
+  explicit_mark:
+    enabled: true
+    prefixes:
+    - '#本地#'
+    - '#private#'
+    strip_before_route: true
+  keyword_rules: from_hard_rules
+  verdict_priority:
+  - explicit_mark
+  - keyword_rules
+  - default
+  on_sensitive: force_local
+intent_classifier:
+  provider: ollama
+  method: knn3
+  embed_model: bge-m3
+  embed_host: http://127.0.0.1:11434
+  model: <[LocalModelName]模型名>
+  temperature: 0
+  max_output_tokens: 10
+  enum:
+  - chat
+  - professional
+  - tool
+  - emotion
+  intent_map:
+    professional: knowledge_qa
+    tool: tool_call
+    emotion: emotion_care
+    chat: chat
+  fail_open: cloud
+  timeout_ms: 2000
+  knn:
+    k: 3
+    train_tsv: ../send/意图分类样本_结果.tsv
+    holdout_ratio: 0.2
+    seed: 42
+    min_vote_ratio: 0.6
+    vector_cache: l2_train_vectors.cache.json
+  prototype:
+    min_sim: 0.55
+rag_gate:
+  trigger_intents:
+  - knowledge_qa
+  domain_scoping_from: hard_rules
+  query_rewrite:
+    enabled: true
+    strategy: term_extract
+    max_retries: 1
+  retrievers:
+  - name: local_wiki
+    source: mcp__tiddlywiki__*
+    enabled: false
+  - name: quaesto_kb
+    source: mcp__quaesto_kb__*
+    enabled: true
+    disclaimer_note: true
+  confidence:
+    trust_backend_rank: false
+    method: top1_cosine
+    margin_judge: enabled
+    margin_min: 0.05
+    thresholds:
+      in_domain: 0.55
+      out_of_domain: 0.73
+  low_confidence_reason:
+  - no_hit
+  - no_hit_after_rewrite
+  - rewrite_fixable
+  - retrieval_miss
+  - dirty_note
+  policies:
+    no_hit: rewrite_retry_first
+    no_hit_after_rewrite: refuse_honesty
+    retrieval_miss: answer_without_context
+    low_confidence_with_answer: cite_original
+  injection:
+    inject_budget_chars: 300
+    position: user_turn_before_query
+    report_dropped_chars: true
+answer_guard:
+  enabled: true
+  version: 2
+  derivable_ops:
+  - add
+  - sub
+  - mul
+  - div
+  - pct
+  direction_pairs:
+  - - 资产
+    - 负债
+  - - 借方
+    - 贷方
+  - - 增加
+    - 减少
+  - - 确认
+    - 冲销
+  - - 计提
+    - 转回
+  - - 免税
+    - 征税
+  - - 退还
+    - 补缴
+  - - 流入
+    - 流出
+  - - 借记
+    - 贷记
+  criteria:
+    semantic_sim:
+      min_sim: 0.6
+      status: 待正式标定
+    number_consistency: true
+    length_ratio_max: 3
+    literal_overlap: auxiliary
+  on_fail:
+  - cite_original
+  - refuse_no_material
+generation_routing:
+  privacy_force_local: true
+  offline_force_local: true
+  local_context_wall:
+    num_ctx: 2048
+    system_tokens: 394
+    inject_tokens: 219
+    max_tokens: 256
+    formula_note: context > num_ctx - system_tokens - inject_tokens → CLOUD
+  cloud_context_threshold: 8000
+  quota_exhausted_policy: degrade_local
+fallback:
+  cloud_fail: local
+  local_fail: cloud
+  answer_guard: true
+  both_fail: error
+rewrite:
+  enabled: true
+  faith_read_patterns:
+  - 念原文
+  - 逐字念
+  - 照材料念
+  - 原文照念
+  target_ratio: 1.2
+  min_anchor_coverage: 0.8
+  max_retries: 1
+  cos_pass: 0.8
+  cos_floor: 0.7
+  qc_band_low: 0.75
+  qc_band_high: 0.85
+  guard_action: review
+exit_gate:
+  enabled: true
+  min_effective_chars: 15
+  retry: 1
+  shell_patterns:
+  - 白米饭
+  - [LocalModelName]
+  - 深海[LocalModelName]
+  - 小肥鱼
+  - 小鱼干
+  - 尾鳍
+  - 拍屏幕
+  - 本鲸
+  - 炸毛
+  - 记一碗
+  - 记你账上
+  - 添一碗
+  - 这碗得加
+  - 白工
+  - 行吧
+  - 听好了
+  - 不许这样答
+  - 又来使唤我
+  - Token
+  - token
+  fail_log: exit_gate_fails.jsonl
+  offtopic_min_sim: 0.3
+  material_fail_min_len: 80
+  contract_marker: <<答>>
+  short_answer_path: false
+  short_answer_min_sim: 0.3
+  format_checks:
+  - intent: knowledge_qa
+    sections_min: 3
+semantic_cache:
+  enabled: false
+  similarity_threshold: 0.75
+  max_entries: 200
+  path: semantic_cache.json
+l3_quality_gate:
+  enabled: false
+  relevancy_min: 0.3
+  max_retries: 1
+metrics:
+  counters:
+  - L1_hit
+  - L2_hit
+  - L2_fail_open
+  - L3_hit
+  - rag_no_hit
+  - rag_no_hit_after_rewrite
+  - rag_rewrite_fixable
+  - rag_retrieval_miss
+  - tool_confirmed
+  - injected_dropped_chars
+  - answer_guard_rejected
+  - emotion_route_count
+  - emotion_followup_count
+  - privacy_keyword_hit
+  - privacy_explicit_mark_hit
+  - semantic_cache_hit
+  - input_guard_rejected
+  - realtime_route_count
+  - l3_gate_retry
+  - l3_gate_rejected
+  - exit_gate_fail
+  - exit_gate_retry
+  - exit_gate_recovered
+  - exit_gate_contract_missing
+  - direction_polarity_hits

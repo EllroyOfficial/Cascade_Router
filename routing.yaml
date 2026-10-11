@@ -1,0 +1,359 @@
+# ⚠️ 本文件里的角色台词 / 风格词（如「白米饭」等）**仅为示例**：个人使用时请替换成你自己的角色词表。
+# routing.yaml —— 混合路由配置本体(草案 v0.2, 2026-10-06)
+# 依据:DESIGN.md §3 结构 + #0005([LocalModelName]对账修订) + #0011/#0012(阈值与margin)
+#      + #0016(query_rewrite 前置) + #0019(low_confidence_reason 细分)
+#      + #0042(纸⑤拍板 D 混合:privacy-keywords 规则 + privacy_detection 双入口)
+# 状态:阈值均"待标定+可配",正式标定由 DSH 侧进行(10–20 真实查询+真实负例)
+
+version: 2
+
+# ── 第一层:硬规则(按序匹配,命中即停;词表数据源:DSH 侧 lexicon) ──
+hard_rules:
+  # ── privacy:隐私敏感强制本地(纸⑤ D 混合·B入口) ──
+  # 置于首位:隐私判定必须先于一切路由(硬规则按序匹配、命中即停)。
+  # 词表起步窄,误放加词、误拦删词,配置热加载;靠 metrics 计数迭代。
+  - id: privacy-keywords
+    pattern: "工资单|病历|身份证|合同(?!资产|负债)|银行卡"
+    intent: privacy_sensitive
+    action: force_local            # 接线 generation_routing.privacy_force_local
+    hot_reload: true               # 词表增删只改本文件,不重启
+    # "合同(?!资产|负债)"负向排除会计域术语(合同资产/合同负债在 rag-a3),
+    # 防域内知识问答被误拦;其余变体措辞靠误放加词迭代。
+
+  # ── knowledge_qa:会计/审计/税法域(与 quaesto_kb 能力面一致) ──
+  - id: rag-a1-income-tax
+    pattern: "所得税|递延所得税|暂时性差异|应纳税暂时性差异|可抵扣暂时性差异|计税基础|应纳税所得额|纳税调增|纳税调减|亏损弥补|递延所得税资产|递延所得税负债"
+    intent: knowledge_qa
+    domain: finance_tax            # 域标记:RAG 门据此分档(字段为本侧 schema)
+  - id: rag-a2-assets
+    pattern: "资产减值|减值准备|坏账准备|存货跌价|预计负债|固定资产|无形资产|使用权资产|租赁负债|折旧|摊销|残值|使用寿命"
+    intent: knowledge_qa
+    domain: finance_tax
+  - id: rag-a3-revenue-instruments
+    pattern: "收入确认|履约义务|合同资产|合同负债|总额法|净额法|金融工具|摊余成本|实际利率|权益工具|公允价值|其他综合收益"
+    intent: knowledge_qa
+    domain: finance_tax
+  - id: rag-a4-audit
+    pattern: "审计|审计底稿|重要性水平|函证|抽凭|盘点|期后事项|持续经营|前任注册会计师|关键审计事项|质量管理|职业道德|独立性"
+    intent: knowledge_qa
+    domain: finance_tax
+  - id: rag-a5-standards-tax
+    pattern: "企业会计准则|小企业会计准则|CAS|准则解释|应用指南|增值税|征收率|进项税额|销项税额|不得抵扣|发票|税前扣除|业务招待费|广宣费|职工福利费|公益捐赠|小微企业优惠|印花税|汇算清缴"
+    intent: knowledge_qa
+    domain: finance_tax
+
+  # ── persona_defense:人设防御(命中即本地直出,零检索零外发) ──
+  - id: persona-defense
+    pattern: "[LocalModelName]|深海[LocalModelName]|大傻鱼|小肥鱼|肥鱼|白米饭|米饭|要饭|饭钱|添饭|记一碗|记我一碗|记你账上|这碗得加|不白干|白工|你才是|炸毛|尾鳍|拍屏幕|本鲸|小硅鱼"
+    intent: persona_defense
+
+  # ── tool_call:真执行类,宁窄勿宽(红线4);执行前必须确认 ──
+  - id: tool-device-switch
+    pattern: "(开|关|打开|关闭)(灯|台灯|客厅灯|卧室灯|空调|插座|风扇|投影)"
+    intent: tool_call
+    confirm: true
+    args_schema: {device: str, action: "enum[open, close]"}
+  - id: tool-volume-timer
+    pattern: "音量(调大|调小|静音)|(定时|倒计时)\\s*\\d+"
+    intent: tool_call
+    confirm: true
+    args_schema: {action: "enum[volume_up, volume_down, mute, timer]", minutes: int}
+  - id: tool-query-nosideeffect
+    pattern: "(几点了|现在几点)|查(天气|气温|限行)|今(天|日)(下雨|最高温|多少度)"
+    intent: tool_call
+    confirm: false                 # 查询类无副作用,不弹确认
+  # ── B3(#0126 用户拍板"confirm 先在 L1 上加"):文件/命令执行类,有副作用必确认 ──
+  # 口径宁窄(红线4):只认"动词+明确执行对象"的八族(导出PDF/备份/清理/跑脚本命令/
+  # 终端执行/存入目录/写脚本/改配置重启路由);"帮我写个周报"类创作意图不命中。
+  - id: tool-file-cmd-exec
+    pattern: "导出成?\\s*PDF|备份一份|清理(一下)?\\s*(临时|缓存|文件|文件夹)|跑(一?下|个)?[^。]{0,8}(脚本|命令|统计)|在终端里跑|存(到|进)\\s*\\S{0,12}\\s*(文件夹|目录)|写个?\\s*(Python|python|Shell|shell|批处理)?\\s*脚本|配置改成|重启路由"
+    intent: tool_call
+    confirm: true                  # 改系统状态,执行前必须确认
+
+  # ── realtime_lookup:实时类(2026-10-10 借 llm-intent-router 启发式) ──
+  # 本地知识库永无实时答案 → 强制云端直答,不检索。强词独认;弱词
+  # "最新消息"限 40 字内短句(防"最新准则解释"这类域内问误伤)。置于
+  # tool 规则之后:查天气/几点类仍归 tool;若撞车则冲突降 L2 fail-open
+  # 亦落云端,方向一致(宁可云端,不可本地编实时数据)。
+  - id: realtime-strong
+    pattern: "新闻|头条|热搜|股价|汇率|行情|比分|赛况|比赛结果|油价|金价|开盘|收盘|今天几号|今天星期几"
+    intent: realtime_lookup
+  - id: realtime-weak-recent
+    pattern: "^.{0,40}最新消息"
+    intent: realtime_lookup
+
+conflict_policy: pass_to_classifier   # 多规则命中不同 intent → 降 L2
+
+# ── 输入守卫(2026-10-10 借 llm-intent-router 启发式) ─────────
+# 非文字垃圾输入(纯标点/emoji/空白,≤8 字符)→ 直接拒答,不进 L1/L2/检索。
+# 结构性守卫,不涉业务词表;长度与字符类都写在正则里,可配可关。
+input_guard:
+  enabled: true
+  garbage_pattern: "^[\\W_]{0,8}$"
+  refuse_reply: "这条本鱼实在看不出想问什么——用户再多给几个字嘛。"
+
+# ── 隐私判定(纸⑤ D 混合:A+B 双入口,默认非敏感;C 本地小模型判敏感暂不做) ──
+privacy_detection:
+  default_sensitive: false           # 未标记且无词表命中 → 默认非敏感(宁窄勿宽)
+  explicit_mark:                     # A入口:用户显式标记,判定绝对准、零误伤
+    enabled: true
+    prefixes: ["#本地#", "#private#"]  # 命中任一 → privacy_sensitive=true
+    strip_before_route: true         # 前缀在路由/检索前剥除,不当查询词
+  keyword_rules: from_hard_rules     # B入口:即 hard_rules 的 privacy-keywords
+  verdict_priority: [explicit_mark, keyword_rules, default]  # 显式标记最优先
+  on_sensitive: force_local          # 判敏感即锁本地,接线 privacy_force_local
+
+# ── 第二层:语义分类 ──────────────────────────────────────────
+# 2026-10-09 换向量匹配(派活①,用户拍板"选型 bge-m3 kNN3"):LLM 零样本分类弱
+# (professional 全判 chat),四档评估 bge-m3 kNN3 = 88.9%/21ms。
+intent_classifier:
+  provider: ollama
+  # method: knn3(现役,向量 kNN 投票) | prototype(备选,原型法,配 bge-small)
+  #        | llm(旧零样本路,弱,仅回归对照;prompt 在 ollama_runtime 内部拼)
+  method: knn3
+  embed_model: bge-m3              # 嵌入模型(knn3/prototype 用)
+  embed_host: http://127.0.0.1:11434
+  model: <[LocalModelName]模型名>            # 占位,仅 method=llm 用,不焊死
+  temperature: 0
+  max_output_tokens: 10
+  enum: [chat, professional, tool, emotion]
+  intent_map:                      # #0005-7):分类词 → 路由意图 映射表
+    professional: knowledge_qa
+    tool: tool_call
+    emotion: emotion_care          # 是否建"本地情感安抚链路"待用户拍板
+    chat: chat
+  fail_open: cloud                 # 枚举外/低置信/超时 → 直升 L3
+  timeout_ms: 2000                 # 依据实测:首载9.6s/稳态27.4t/s(#0003-8)
+  knn:
+    k: 3                           # 派活口径:kNN3 投票
+    train_tsv: ../send/意图分类样本_结果.tsv   # 450 条;路径相对本文件
+    holdout_ratio: 0.2             # 8成训练/2成留出;留出集绝不参与投票/调参
+    seed: 42                       # 确定性切分,可复跑
+    min_vote_ratio: 0.60           # 头名票数比下限,低于→空→fail-open;
+                                   # ⚠️ 票数比不是概率
+                                   # 依据(#0139 用户拍"上②甲",2026-10-11):四档消融
+                                   # (期望列改后版,0.67→0.60)fail-open 58.7%→14.7%、
+                                   # 放行问题 11→4、tool 出手 1→11;代价=出手错判 3→18
+                                   # (chat↔emotion 边界为主,危险方向 chat→tool 2→3)。
+                                   # 正式标定仍待题库,届时再校。
+    vector_cache: l2_train_vectors.cache.json  # 训练向量缓存(重启不重算)
+  prototype:                       # 备选档(配 qllama/bge-small-zh-v1.5)
+    min_sim: 0.55                  # 对原型余弦下限,待标定;⚠️ 不是校准概率
+
+# ── RAG 门(#0016:查询改写前置;#0019:0命中归因细分) ─────────
+rag_gate:
+  trigger_intents: [knowledge_qa]  # 仅域内意图触发检索
+  domain_scoping_from: hard_rules  # #0012-3):域限定沿用 L1,不让向量兼判域
+
+  query_rewrite:                   # #0016:检索前先术语化,可配开关
+    enabled: true
+    strategy: term_extract         # 抽术语/补准则号;实现形式待定
+    max_retries: 1                 # 原话 0 命中 → 改写重试一次
+
+  retrievers:                      # 后端只负责"给候选"(#0011-4)
+    - name: local_wiki
+      source: mcp__tiddlywiki__*   # 语料口径待用户拍板(#0009)
+      enabled: false               # 本地库当前为空,待语料拍板后启用
+    - name: quaesto_kb
+      source: mcp__quaesto_kb__*
+      enabled: true
+      disclaimer_note: true        # #0011-5):随答案带"转录副本/AI草案"口径
+
+  confidence:                      # 置信度统一由本地 bge-m3 对候选复算
+    trust_backend_rank: false      # #0021/#0022:后端顺序不可信(rank-1 曾
+                                   # 返回完全不对口项),一律本地复算/重排
+    method: top1_cosine            # 口径:#0011-3 实测可分,待正式标定确认
+    margin_judge: enabled          # #0012-2):top1−top2 差值辅助
+    margin_min: 0.05               # 待标定
+    thresholds:
+      in_domain: 0.55              # 域内下限,#0144 增值税重抽(域内min 0.554/重叠带0.005):召回100%、域外误放1条;改前0.58 召回73%
+      out_of_domain: 0.73          # 域外从严,#0012-3:0.72–0.75,待标定
+
+  low_confidence_reason:           # 归因枚举(#0009 + #0016 + #0019)
+    - no_hit                       # 检索 0 命中(未改写)
+    - no_hit_after_rewrite         # 改写后仍 0 → 大概率库里没有
+    - rewrite_fixable              # 改写后命中 → 正常路径
+    - retrieval_miss               # 有候选但低于阈值
+    - dirty_note                   # 命中但源笔记质量差
+
+  policies:
+    no_hit: rewrite_retry_first    # #0025-3):未改写档先按 max_retries:1
+                                   # 改写重试,仍 0 才落 no_hit_after_rewrite
+    no_hit_after_rewrite: refuse_honesty   # #0019-4):不注入、不自由发挥,
+                                           # 直答"库里没查到"(会计税法域:
+                                           # 宁说没有,不能编)
+    retrieval_miss: answer_without_context # 不注入照样答,防垃圾上下文
+                                   # ⚠️ 这是开关(#0184):router 已接线读取;改 refuse_honesty
+                                   # ⇒ 无注入域内题一键全拒(当前默认不变,零行为变化)
+    low_confidence_with_answer: cite_original      # 答案与上下文重合度过低
+                                                   # → 弃答直出原文片段
+                                                   # (阈值待标定)
+
+  injection:                       # 硬约束区(出口无条件调用并回报丢弃量)
+    inject_budget_chars: 300       # enforce_cap,按句子边界切
+    position: user_turn_before_query   # [知识库]放用户轮、紧挨提问之前,
+                                       # 提问必须在最后(Ollama溢出保尾)
+    report_dropped_chars: true
+
+# ── 答案兜底校验(answer_guard v2,生成之后、返回之前) ───────
+# 依据:#0023(原型4/4) + #0024(v0.1字面判据误伤人设化回答) + #0026(v0.2 4/4)
+answer_guard:
+  enabled: true
+  version: 2                       # 语义判据版(bge-m3),不用 v0.1 字面版
+  number_tol: 0.01                 # #0187 用户口径:统一单位后绝对 0.01 容差(≤放行+标注[舍入差0.01],>判Fail)
+  derivable_ops: ["add", "sub", "mul", "div", "pct"]  # 可推导数集规则表(#0186)
+  direction_pairs:                 # 方向极性表(#0167 C:review 只标不拒;词对可配)——此前漏落,补
+    - ["资产", "负债"]
+    - ["借方", "贷方"]
+    - ["增加", "减少"]
+    - ["确认", "冲销"]
+    - ["计提", "转回"]
+    - ["免税", "征税"]
+    - ["退还", "补缴"]
+    - ["流入", "流出"]
+    - ["借记", "贷记"]
+  criteria:
+    semantic_sim:
+      min_sim: 0.60                # #0145 真生成对(干净正例min 0.556/中位0.775);0.65 误杀半数忠读;主拦截交给数字闸
+      status: 待正式标定           # 负例仅1个,待扩样(≥5真实错答)
+    number_consistency: true       # 不可省:#0026-4 编数字语义高达0.848,
+                                   # 语义判据抓不住,数字一致必须独立判
+    length_ratio_max: 3            # 答案 ≤ 原料字数×3,防扩写
+    literal_overlap: auxiliary     # 字面重合降为辅助信号,只抓完全离题
+  on_fail:                         # 不合格降级顺序,绝不返回模型自编内容
+    - cite_original                # ①直出原文片段
+    - refuse_no_material           # ②原料为空 → 回"没查到"
+
+# ── 生成路由(独立于意图路由) ────────────────────────────────
+generation_routing:
+  privacy_force_local: true          # 敏感判定入口见 privacy_detection(纸⑤D:A+B)
+  offline_force_local: true
+  local_context_wall:              # 本地硬墙计算式(#0005-4)
+    num_ctx: 2048
+    system_tokens: 394             # 实测值(#0002-4)
+    inject_tokens: 219             # ≈300字×0.73token/字
+    max_tokens: 256
+    # 有效阈值 = num_ctx − system_tokens − inject_tokens ≈ 1435 token
+    formula_note: "context > num_ctx - system_tokens - inject_tokens → CLOUD"
+  cloud_context_threshold: 8000    # 仅作云端内部选择阈值
+  quota_exhausted_policy: degrade_local
+
+# ── 兜底链 ─────────────────────────────────────────────────
+fallback:
+  cloud_fail: local
+  local_fail: cloud
+  answer_guard: on                 # RAG 链路生成后必过 answer_guard(见上)
+  both_fail: error                 # 显式报错,不许静默吞
+
+# ── 念稿两段式改写段(2026-10-10,设计稿 v0) ─────────────────
+# RAG 注入后、生成出口前接管 knowledge_qa:改写模式走 L3 云端口语化,
+# 忠读模式本地接龙逐字;锚点覆盖率不足自动降级,直出材料原文兜底。
+rewrite:
+  enabled: false                   # 部署时开(需注入真实 l3_provider 与 local executor)
+  faith_read_patterns:             # 用户原话命中 → 忠读模式(L1 式词表,可增删)
+    - "念原文"
+    - "逐字念"
+    - "照材料念"
+    - "原文照念"
+  target_ratio: 1.2                # 改写稿长度/材料长度上限(待标定)
+  min_anchor_coverage: 0.8         # 数字+条款序号锚点覆盖率门槛(待标定)
+  max_retries: 1                   # 覆盖不足重试次数(rewrite 降 faith_read 计一次)
+  # ── 三道防线阈值(#0104 用户拍板口径,待标定/待最终拍) ──
+  cos_pass: 0.80                   # #0145 真生成对:0.85 高于干净正例p80(仅2-3条越过),降至p80位
+  cos_floor: 0.70                  # <此值拒(主题漂移)
+  qc_band_low: 0.75                # 0.75–0.85 定点微型质检带(本地死命令PASS/FAIL)
+  qc_band_high: 0.85
+  guard_action: review             # 正则截杀:先review统计假阳性,跑一轮后切deny
+
+
+# ── 出口硬兜(#0154 用户定稿:Fail + 重试一次) ─────────────────
+# 判据(命中任一 ⇒ Fail,不出前端,同路重试一次;仍 Fail ⇒ 降级链直出原文):
+#   (a+b 合成)剥壳后有效字数 < min_effective_chars——壳词剥掉后没实质才拦,
+#              "壳+实质"放行(允许人设化,防误杀,#0154 [LocalModelName]补充①);
+#   (c)格式不符——按 expect 结构化字段判(sections_min/must_include,#0154 补充②),
+#              无 expect 不判。
+# 每次 Fail 留档(instruction/material/output/fail_reason)= LoRA 现成素材(#0154 补充④)。
+# 基座模型绝不换(#0154 红线);模型能力问题交 LoRA(用户处理)。
+exit_gate:
+  enabled: true
+  min_effective_chars: 15          # 用户原话口径:字数小于 15 判 Fail
+  retry: 1                         # 重试一次;仍 Fail 走降级链
+  shell_patterns:                  # 壳词表(剥壳用);增删只改此处,热加载生效
+    - "白米饭"
+    - "[LocalModelName]"
+    - "深海[LocalModelName]"
+    - "小肥鱼"
+    - "小鱼干"
+    - "尾鳍"
+    - "拍屏幕"
+    - "本鲸"
+    - "炸毛"
+    - "记一碗"
+    - "记你账上"
+    - "添一碗"
+    - "这碗得加"
+    - "白工"
+    - "行吧"
+    - "听好了"
+    - "不许这样答"
+    - "又来使唤我"
+    - "Token"
+    - "token"
+  fail_log: exit_gate_fails.jsonl  # Fail 留档落盘(相对本文件),LoRA 素材
+  offtopic_min_sim: 0.30           # [答非所问]问题级 cos 下限(待标定,#0161)
+  material_fail_min_len: 80        # 材料级 Fail 长度门(#0167 A):len≥80 才判 Fail,短答案降观察[短答结构偏低]
+  contract_marker: "<<答>>"        # 契约头标记(#0167 B):rewrite_stage 要求首行输出,exit_gate 验头+剥头
+  short_answer_path: false        # 回滚③→②(#0173 用户拍"先止损";④top-2 版另测)
+  short_answer_min_sim: 0.30      # 短答问题级 cos 下限(分布择点:0.30 正例过 26/27;说反与正例重叠,拦力在锚点/数字)
+  format_checks: []                # 结构化格式期望(如 {"sections_min": 3}),按需扩展
+
+
+# ── 语义缓存(2026-10-10 改进项①,vLLM-SR 思路) ─────────────
+# knowledge_qa 查询先过缓存:与既有条目余弦 ≥ 阈值直接复用答案,
+# 跳过 RAG 与生成(省云端 token + 绕开 L3 改写时延)。
+semantic_cache:
+  enabled: false                   # 部署时开(嵌入件走 embed_local 统一入口)
+  similarity_threshold: 0.75       # 命中余弦门槛(2026-10-10 实测三档:small 同义min0.829/不同义max0.595;m3 档 0.92 本就漏 2/5 同义)
+  max_entries: 200                 # 最大条目数,超出丢最旧
+  path: semantic_cache.json        # 落盘位置(相对 routing.yaml 所在目录)
+
+# ── L3 出口质量门(2026-10-10 收尾,借 Sriti quality_gate + RouteLM relevancy) ──
+# L3 答复 relevancy 达标才收货;不过→同层重试→仍不过降级本地并如实标注。
+l3_quality_gate:
+  enabled: false                   # 部署时开(嵌入件就位后)
+  relevancy_min: 0.3               # 问-答相关度门槛(待标定)
+  max_retries: 1                   # 同层重试次数
+  # 实测基线口径(2026-10-10 #0101/#0102 双方复核,待用户拍板,未接线):
+  # 材料级 cos(原文,答案):cos≥0.70 放行(拦主题漂移);0.70–0.85 且
+  # anchors.extra_in_answer>0 → 转人工复核(宁漏不误,不自动拒);
+  # 同域胡编纯 cos 拦不住。实测:忠读逐字 0.778/方向说反 0.809,正反区间重叠。
+
+# ── 可观测性 ───────────────────────────────────────────────
+metrics:
+  counters:
+    - L1_hit
+    - L2_hit
+    - L2_fail_open
+    - L3_hit
+    - rag_no_hit
+    - rag_no_hit_after_rewrite     # 库覆盖问题的计数,语料决策依据
+    - rag_rewrite_fixable
+    - rag_retrieval_miss
+    - tool_confirmed
+    - injected_dropped_chars       # 每次截断丢弃字数,出口回报
+    - answer_guard_rejected        # 兜底校验拦截次数,按判据细分归因
+    - emotion_route_count          # 用户拍板(纸③B):emotion 类被路由次数
+    - emotion_followup_count       # 用户追问率计数;两周后评估是否升级为建链路
+    - privacy_keyword_hit          # 用户拍板(纸⑤D·B入口):词表命中次数,词表增删依据
+    - privacy_explicit_mark_hit    # 用户拍板(纸⑤D·A入口):显式标记使用次数
+    - semantic_cache_hit           # 语义缓存命中次数(2026-10-10 改进项①)
+    - input_guard_rejected         # 输入守卫拒答次数(2026-10-10 改进项②)
+    - realtime_route_count         # 实时类路由云端次数(2026-10-10 改进项②)
+    - l3_gate_retry                # L3 质量门同层重试次数(2026-10-10 收尾)
+    - l3_gate_rejected             # L3 质量门拒绝降级次数(2026-10-10 收尾)
+    - exit_gate_fail               # 出口硬兜 Fail 触发次数(#0154)
+    - exit_gate_retry              # 出口硬兜重试次数(#0154)
+    - exit_gate_recovered          # 出口硬兜重试后服从次数(#0154)
+    - exit_gate_contract_missing   # 契约头缺失次数(#0167 B,只记数)
+    - direction_polarity_hits      # 方向极性表 review 命中次数(#0167 C,只标不拒)
+    - number_rounding_tolerated    # 数字口径(#0187):舍入差≤0.01 放行+标注次数

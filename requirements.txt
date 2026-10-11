@@ -1,0 +1,24 @@
+# hybrid-router · Python 依赖（本机实测版本，2026-10-11）
+# 环境：Windows / Python 3.13.15 / 虚拟环境 .venv
+#
+# 推理服务另需：ollama 0.40.0（默认 http://127.0.0.1:11434）
+#
+# ⚠️ torch 必须用 CPU 构建（进程内嵌入走 CPU，0 显存；本机 cuda_available=False）
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# ── 顶层依赖（工程直接使用）
+torch==2.14.1+cpu
+transformers==5.19.0
+numpy==2.5.3
+huggingface_hub==1.33.0
+pyyaml==6.0.3
+
+# ── 仅评估用（"System 1" 非自回归决策引擎，输出校准概率；生产可不装）
+laya==0.4.0
+
+# ── 由上述依赖间接引入（本机实测版本，供锁定参考）
+# tokenizers==0.23.2   safetensors==0.8.0   regex==2026.9.29   tqdm==4.70.1
+# filelock==4.0.12     fsspec==2026.9.0     packaging==26.3    typing_extensions==4.16.0
+# sympy==1.14.0        networkx==3.7        jinja2==3.1.6      mpmath==1.3.0
+# hf-xet==1.7.0        httpx==0.28.1        anyio==4.15.1      certifi==2026.7.22
+# （共 40 个包；需要全量锁定用 `pip freeze > requirements.lock.txt`）

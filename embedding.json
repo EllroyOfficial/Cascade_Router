@@ -1,0 +1,18 @@
+{
+  "backend": "ollama",
+  "inproc_model": "BAAI/bge-small-zh-v1.5",
+  "ollama_model": "qllama/bge-small-zh-v1.5:latest",
+  "ollama_url": "http://127.0.0.1:11434",
+  "threads": 8,
+  "max_length": 512,
+  "consumers": {
+    "l2": {
+      "backend": "ollama",
+      "ollama_model": "qllama/bge-small-zh-v1.5:latest"
+    },
+    "exit_gate": {
+      "backend": "ollama",
+      "ollama_model": "qllama/bge-small-zh-v1.5:latest"
+    }
+  }
+}

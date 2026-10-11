@@ -1,0 +1,34 @@
+# ── 运行时 / 依赖
+.venv/
+__pycache__/
+*.pyc
+.hf_cache/
+hf_cache/
+*.safetensors
+*.bin
+*.gguf
+*.pt
+# ── 备份 / 临时
+*.bak
+*.bak-*
+_*_tmp.py
+*.tmp
+*.log
+# ── 含真实问答/素材的留档（私密，不进仓库）
+exit_gate_fails.jsonl
+observations.jsonl
+judge_detail.jsonl
+*_review.jsonl
+# ── 二进制缓存 / 大件
+l2_train_vectors.cache.json
+*.zstd
+*.pdf
+*.pdf.zip
+# ── 内部文档与判分/评估产物（不随公开仓库发布）
+DESIGN.md
+TESTS.md
+OPTIONS.md
+judge_*.jsonl
+L2_CLS_EVAL_*.json
+*_EVAL_*.json
+[LocalModelName]
