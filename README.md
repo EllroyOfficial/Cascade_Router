@@ -227,7 +227,7 @@ hybrid-router/
 
 ```bash
 # 0) 取代码
-git clone https://github.com/EllroyOfficial/hybrid-router.git
+git clone https://github.com/EllroyOfficial/Cascade_Router.git
 cd hybrid-router
 
 # 1) Python 环境
