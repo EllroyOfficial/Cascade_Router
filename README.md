@@ -206,6 +206,10 @@ request(text, meta)
 ## 6. 安装与运行
 
 ```bash
+# 0) 取代码
+git clone https://github.com/EllroyOfficial/hybrid-router.git
+cd hybrid-router
+
 # 1) Python 环境
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt   # torch(CPU)/transformers/numpy/huggingface_hub/pyyaml
 
